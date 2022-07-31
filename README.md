@@ -193,11 +193,11 @@ After the installation, you can access the TAP GUI, The url should be `https://t
 
 You can see the result of the pipelinerun on the tekton dashboard
 
-<img width="1024" alt="image" src="https://user-images.githubusercontent.com/106908/182033773-6d5460e3-29af-442d-91fe-15cffa13998e.png">
-
 ```
 kubectl port-forward -n tekton-pipelines service/tekton-dashboard 9097:9097
 ```
+
+<img width="1024" alt="image" src="https://user-images.githubusercontent.com/106908/182033773-6d5460e3-29af-442d-91fe-15cffa13998e.png">
 
 ## Deploy a workload
 
