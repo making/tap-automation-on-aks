@@ -1,0 +1,1075 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tap-automation-config
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: "1Gi"
+---
+# tkn pipeline start tap-automation-create --showlog -w name=config,claimName=tap-automation-config --use-param-defaults -n tap-automation
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: tap-automation-create
+spec:
+  workspaces:
+  - name: config
+  params:
+  - name: resource_group
+    type: string
+    default: tap-rg
+  - name: location
+    type: string
+    default: japaneast
+  - name: cluster_name
+    type: string
+    default: tap-sandbox
+  - name: vm_size
+    type: string
+    default: standard_f4s_v2
+  - name: node_count
+    type: string
+    default: "3"
+  - name: tap_version
+    type: string
+    default: "1.2.0"
+  - name: cluster_essentials_version
+    type: string
+    default: "1.2.0"
+  tasks:
+  - name: az-login
+    taskRef:
+      name: az-login
+    workspaces:
+    - name: config
+      workspace: config
+  - name: download-from-pivnet
+    runAfter:
+    - az-login
+    taskRef:
+      name: download-from-pivnet
+    workspaces:
+    - name: config
+      workspace: config
+    params:
+    - name: tap_version
+      value: $(params.tap_version)
+    - name: cluster_essentials_version
+      value: $(params.cluster_essentials_version)
+  - name: create-resource-group
+    runAfter:
+    - download-from-pivnet
+    taskRef:
+      name: create-resource-group
+    workspaces:
+    - name: config
+      workspace: config
+    params:
+    - name: resource_group
+      value: $(params.resource_group)
+    - name: location
+      value: $(params.location)
+  - name: create-acr
+    runAfter:
+    - create-resource-group
+    taskRef:
+      name: create-acr
+    workspaces:
+    - name: config
+      workspace: config
+    params:
+    - name: resource_group
+      value: $(params.resource_group)
+    - name: location
+      value: $(params.location)
+  - name: create-aks
+    runAfter:
+    - create-acr
+    taskRef:
+      name: create-aks
+    workspaces:
+    - name: config
+      workspace: config
+    params:
+    - name: resource_group
+      value: $(params.resource_group)
+    - name: location
+      value: $(params.location)
+    - name: cluster_name
+      value: $(params.cluster_name)
+    - name: vm_size
+      value: $(params.vm_size)
+    - name: node_count
+      value: $(params.node_count)
+  - name: install-cluster-essentials
+    runAfter:
+    - create-aks
+    taskRef:
+      name: install-cluster-essentials
+    workspaces:
+    - name: config
+      workspace: config
+    params:
+    - name: cluster_essentials_version
+      value: $(params.cluster_essentials_version)
+  - name: create-envoy-ip
+    runAfter:
+    - install-cluster-essentials
+    taskRef:
+      name: create-envoy-ip
+    workspaces:
+    - name: config
+      workspace: config
+    params:
+    - name: resource_group
+      value: $(params.resource_group)
+    - name: location
+      value: $(params.location)
+  - name: install-tap
+    runAfter:
+    - create-envoy-ip
+    taskRef:
+      name: install-tap
+    workspaces:
+    - name: config
+      workspace: config
+    params:
+    - name: resource_group
+      value: $(params.resource_group)
+    - name: tap_version
+      value: $(params.tap_version)
+    - name: acr_name
+      value: $(tasks.create-acr.results.acr_name)
+    - name: acr_password
+      value: $(tasks.create-acr.results.acr_password)
+    - name: envoy_ip
+      value: $(tasks.create-envoy-ip.results.envoy_ip)
+---
+# tkn pipeline start tap-automation-delete --showlog -w name=config,claimName=tap-automation-config --use-param-defaults -n tap-automation
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: tap-automation-delete
+spec:
+  workspaces:
+  - name: config
+  params:
+  - name: resource_group
+    type: string
+    default: tap-rg
+  - name: cluster_name
+    type: string
+    default: tap-sandbox
+  - name: acr_name
+    type: string
+    default: auto
+  tasks:
+  - name: az-login
+    taskRef:
+      name: az-login
+    workspaces:
+    - name: config
+      workspace: config
+  - name: delete-tap
+    runAfter:
+    - az-login
+    taskRef:
+      name: delete-tap
+    workspaces:
+    - name: config
+      workspace: config
+  - name: delete-envoy-ip
+    runAfter:
+    - delete-tap
+    taskRef:
+      name: delete-envoy-ip
+    workspaces:
+    - name: config
+      workspace: config
+    params:
+    - name: resource_group
+      value: $(params.resource_group)
+  - name: delete-acr
+    runAfter:
+    - delete-envoy-ip
+    taskRef:
+      name: delete-acr
+    workspaces:
+    - name: config
+      workspace: config
+    params:
+    - name: resource_group
+      value: $(params.resource_group)
+    - name: acr_name
+      value: $(params.acr_name)
+  - name: delete-aks
+    runAfter:
+    - delete-acr
+    taskRef:
+      name: delete-aks
+    workspaces:
+    - name: config
+      workspace: config
+    params:
+    - name: resource_group
+      value: $(params.resource_group)
+    - name: cluster_name
+      value: $(params.cluster_name)
+  - name: delete-resource-group
+    runAfter:
+    - delete-aks
+    taskRef:
+      name: delete-resource-group
+    workspaces:
+    - name: config
+      workspace: config
+    params:
+    - name: resource_group
+      value: $(params.resource_group)
+---
+# tkn task start az-login --showlog -w name=config,claimName=tap-automation-config --use-param-defaults -n tap-automation
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: az-login
+spec:
+  workspaces:
+  - name: config
+  steps:
+  - name: az-login
+    image: mcr.microsoft.com/azure-cli
+    env:
+    - name: CLIENT_ID
+      valueFrom:
+        secretKeyRef:
+          name: azure-service-principal
+          key: client_id
+    - name: CLIENT_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: azure-service-principal
+          key: client_secret
+    - name: TENANT_ID
+      valueFrom:
+        secretKeyRef:
+          name: azure-service-principal
+          key: tenant_id
+    - name: SUBSCRIPTION_ID
+      valueFrom:
+        secretKeyRef:
+          name: azure-service-principal
+          key: subscription_id
+    script: |
+      #!/bin/bash -e
+      rm -rf ~/.azure
+      mkdir -p $(workspaces.config.path)/.azure
+      ln -fs $(workspaces.config.path)/.azure ~/.azure
+      az login --service-principal -u ${CLIENT_ID} -p ${CLIENT_SECRET} --tenant ${TENANT_ID}
+---
+# tkn task start download-from-pivnet --showlog -w name=config,claimName=tap-automation-config --use-param-defaults -n tap-automation
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: download-from-pivnet
+spec:
+  params:
+  - name: tap_version
+    type: string
+    default: "1.2.0"
+  - name: cluster_essentials_version
+    type: string
+    default: "1.2.0"
+  workspaces:
+  - name: config
+  steps:
+  - name: download-from-pivnet
+    image: pasnsxt/python-tasks
+    env:
+    - name: TANZUNET_API_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: tanzunet
+          key: api_token
+    script: |
+      #!/bin/bash -e
+      mkdir -p $(workspaces.config.path)/.pivnet
+      pivnet-cli login --api-token=${TANZUNET_API_TOKEN}
+      pivnet-cli download-product-files --product-slug='tanzu-application-platform' --release-version='$(params.tap_version)' --glob='tanzu-framework-linux-amd64.tar' -d $(workspaces.config.path)/.pivnet
+      pivnet-cli download-product-files --product-slug='tanzu-cluster-essentials' --release-version='$(params.cluster_essentials_version)' --glob='tanzu-cluster-essentials-linux-amd64-*' -d $(workspaces.config.path)/.pivnet
+---
+# tkn task start create-resource-group --showlog -w name=config,claimName=tap-automation-config --use-param-defaults -n tap-automation
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: create-resource-group
+spec:
+  params:
+  - name: resource_group
+    type: string
+    default: tap-rg
+  - name: location
+    type: string
+    default: japaneast
+  workspaces:
+  - name: config
+  steps:
+  - name: create-resource-group
+    image: mcr.microsoft.com/azure-cli
+    script: |
+      #!/bin/bash -ex
+      rm -rf ~/.azure
+      mkdir -p $(workspaces.config.path)/.azure
+      ln -fs $(workspaces.config.path)/.azure ~/.azure
+      az group create --name $(params.resource_group) --location $(params.location)
+---
+# tkn task start create-acr --showlog -w name=config,claimName=tap-automation-config --use-param-defaults -n tap-automation
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: create-acr
+spec:
+  params:
+  - name: resource_group
+    type: string
+    default: tap-rg
+  - name: location
+    type: string
+    default: japaneast
+  workspaces:
+  - name: config
+  results:
+  - name: acr_name
+  - name: acr_password
+  steps:
+  - name: create-acr
+    image: mcr.microsoft.com/azure-cli
+    script: |
+      #!/bin/bash -ex
+      rm -rf ~/.azure
+      mkdir -p $(workspaces.config.path)/.azure
+      ln -fs $(workspaces.config.path)/.azure ~/.azure
+      ACR_NAME=tap${RANDOM}
+      echo -n ${ACR_NAME} > $(results.acr_name.path)
+      echo -n ${ACR_NAME} > ~/.azure/last-acr-name
+      az acr create --resource-group $(params.resource_group) \
+        --name ${ACR_NAME} --location $(params.location) --sku standard \
+        --admin-enabled true
+      set +x
+      ACR_PASSWORD=$(az acr credential show --name ${ACR_NAME} --resource-group $(params.resource_group) --query 'passwords[0].value' --output tsv)      
+      echo -n ${ACR_PASSWORD} > $(results.acr_password.path)
+      echo -n ${ACR_PASSWORD} > ~/.azure/last-acr-password
+      set -x
+      chmod 644 ~/.azure/*
+---
+# tkn task start create-aks --showlog -w name=config,claimName=tap-automation-config --use-param-defaults -n tap-automation
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: create-aks
+spec:
+  params:
+  - name: resource_group
+    type: string
+    default: tap-rg
+  - name: location
+    type: string
+    default: japaneast
+  - name: cluster_name
+    type: string
+    default: tap-sandbox
+  - name: vm_size
+    type: string
+    default: standard_f4s_v2
+  - name: node_count
+    type: string
+    default: "1"
+  workspaces:
+  - name: config
+  steps:
+  - name: create-aks
+    image: mcr.microsoft.com/azure-cli
+    script: |
+      #!/bin/bash -ex
+      rm -rf ~/.azure
+      rm -rf ~/.ssh
+      rm -rf ~/.kube
+      mkdir -p $(workspaces.config.path)/.azure
+      mkdir -p $(workspaces.config.path)/.ssh
+      mkdir -p $(workspaces.config.path)/.kube
+      ln -fs $(workspaces.config.path)/.azure ~/.azure
+      ln -fs $(workspaces.config.path)/.ssh ~/.azure
+      ln -fs $(workspaces.config.path)/.kube ~/.kube
+      az aks create \
+        --resource-group $(params.resource_group) \
+        --name $(params.cluster_name) \
+        --node-count $(params.node_count) \
+        --enable-cluster-autoscaler \
+        --min-count 1 \
+        --max-count 10 \
+        --node-vm-size $(params.vm_size) \
+        --load-balancer-sku standard \
+        --zones 1 2 3 \
+        --generate-ssh-keys
+      az aks get-credentials --resource-group $(params.resource_group) --name $(params.cluster_name) --admin --overwrite-existing
+      chmod 644 ~/.kube/config
+
+      # https://docs.microsoft.com/en-us/azure/aks/static-ip#create-a-service-using-the-static-ip-address
+      RG_ID=$(az group show --name $(params.resource_group) -o tsv --query id )
+      SP_APP_ID=$(az aks show --name $(params.cluster_name) --resource-group $(params.resource_group) --query "identity.principalId" -o tsv)
+      az role assignment create --assignee-object-id ${SP_APP_ID} --assignee-principal-type "ServicePrincipal" --role "Network Contributor" --scope ${RG_ID}
+---
+# tkn task start install-cluster-essentials --showlog -w name=config,claimName=tap-automation-config --use-param-defaults -n tap-automation
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: install-cluster-essentials
+spec:
+  params:
+  - name: cluster_essentials_version
+    type: string
+    default: "1.2.0"
+  workspaces:
+  - name: config
+  steps:
+  - name: install-cluster-essentials
+    image: mcr.microsoft.com/azure-cli
+    env:
+    - name: INSTALL_REGISTRY_USERNAME
+      valueFrom:
+        secretKeyRef:
+          name: tanzunet
+          key: username
+    - name: INSTALL_REGISTRY_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: tanzunet
+          key: password
+    script: |
+      #!/bin/bash -ex
+      rm -rf ~/.kube
+      ln -fs $(workspaces.config.path)/.kube ~/.kube
+      ln -fs $(workspaces.config.path)/.azure ~/.azure
+      az aks install-cli
+
+      mkdir -p tanzu-cluster-essentials
+      tar xzvf $(workspaces.config.path)/.pivnet/tanzu-cluster-essentials-*-amd64-*.tgz -C tanzu-cluster-essentials
+
+      export INSTALL_BUNDLE=registry.tanzu.vmware.com/tanzu-cluster-essentials/cluster-essentials-bundle:$(params.cluster_essentials_version)
+      export INSTALL_REGISTRY_HOSTNAME=registry.tanzu.vmware.com
+      cd tanzu-cluster-essentials
+      ./install.sh --yes
+---
+# tkn task start create-envoy-ip --showlog -w name=config,claimName=tap-automation-config --use-param-defaults -n tap-automation
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: create-envoy-ip
+spec:
+  params:
+  - name: resource_group
+    type: string
+    default: tap-rg
+  - name: location
+    type: string
+    default: japaneast
+  workspaces:
+  - name: config
+  results:
+  - name: envoy_ip
+  steps:
+  - name: create-envoy-ip
+    image: mcr.microsoft.com/azure-cli
+    script: |
+      #!/bin/bash -ex
+      rm -rf ~/.azure
+      mkdir -p $(workspaces.config.path)/.azure
+      ln -fs $(workspaces.config.path)/.azure ~/.azure
+      az network public-ip create --resource-group $(params.resource_group) --name envoy-ip --location $(params.location) --sku Standard --allocation-method static
+      ENVOY_IP=$(az network public-ip show --resource-group $(params.resource_group) --name envoy-ip --query ipAddress --output tsv)
+      echo -n ${ENVOY_IP} > $(results.envoy_ip.path)
+      echo -n ${ENVOY_IP} > ~/.azure/envoy-ip
+---
+# tkn task start install-tap --showlog -w name=config,claimName=tap-automation-config --use-param-defaults -n tap-automation
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: install-tap
+spec:
+  params:
+  - name: resource_group
+    type: string
+    default: tap-rg
+  - name: tap_version
+    type: string
+    default: "1.2.0"
+  - name: acr_name
+    type: string
+    default: auto
+  - name: acr_password
+    type: string
+    default: auto
+  - name: envoy_ip
+    type: string
+    default: auto
+  workspaces:
+  - name: config
+  steps:
+  - name: install-tap
+    image: mcr.microsoft.com/azure-cli
+    env:
+    - name: TANZUNET_USERNAME
+      valueFrom:
+        secretKeyRef:
+          name: tanzunet
+          key: username
+    - name: TANZUNET_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: tanzunet
+          key: password
+    - name: TANZU_CLI_NO_INIT
+      value: "true"
+    script: |
+      #!/bin/bash -ex
+      rm -rf ~/.kube
+      ln -fs $(workspaces.config.path)/.kube ~/.kube
+      ln -fs $(workspaces.config.path)/.azure ~/.azure
+      az aks install-cli      
+      set +x
+      ACR_NAME=$(params.acr_name)
+      if [ "${ACR_NAME}" == "auto" ];then
+        ACR_NAME=$(cat ~/.azure/last-acr-name)
+      fi
+      ACR_PASSWORD=$(params.acr_password)
+      if [ "${ACR_PASSWORD}" == "auto" ];then
+        ACR_PASSWORD=$(cat ~/.azure/last-acr-password)
+      fi
+      ACR_USERNAME=${ACR_NAME}      
+      ACR_SERVER=${ACR_NAME}.azurecr.io
+      set -x
+      ENVOY_IP=$(params.envoy_ip)
+      if [ "${ENVOY_IP}" == "auto" ];then
+        ENVOY_IP=$(cat ~/.azure/envoy-ip)
+      fi
+      DOMAIN_NAME=$(echo ${ENVOY_IP} | sed 's/\./-/g').sslip.io
+
+      mkdir -p ~/.bin
+      export PATH=${PATH}:${HOME}/.bin
+      tar xf $(workspaces.config.path)/.pivnet/tanzu-framework-*-amd64.tar
+      install cli/core/*/tanzu-core-*_amd64 ${HOME}/.bin/tanzu
+
+      tanzu version
+      tanzu plugin install --local cli all
+
+      kubectl create ns tap-install -o yaml \
+        --dry-run=client \
+        | kubectl apply -f-
+
+      set +x
+      tanzu secret registry add tap-registry \
+        --username "${TANZUNET_USERNAME}" \
+        --password "${TANZUNET_PASSWORD}" \
+        --server registry.tanzu.vmware.com \
+        --export-to-all-namespaces \
+        --yes \
+        --namespace tap-install \
+        --kubeconfig ~/.kube/config
+      set -x
+
+      tanzu package repository add tanzu-tap-repository \
+        --url registry.tanzu.vmware.com/tanzu-application-platform/tap-packages:$(params.tap_version) \
+        --namespace tap-install \
+        --kubeconfig ~/.kube/config
+
+      cat <<EOF > tap-values.yml
+      profile: full
+
+      ceip_policy_disclosed: true
+
+      cnrs:
+        domain_name: ${DOMAIN_NAME}  
+        domain_template: "{{.Name}}-{{.Namespace}}.{{.Domain}}"
+
+      buildservice:
+        kp_default_repository: ${ACR_SERVER}/build-service
+        kp_default_repository_username: ${ACR_USERNAME}
+        kp_default_repository_password: ${ACR_PASSWORD}
+
+      supply_chain: basic
+
+      ootb_supply_chain_basic:
+        registry:
+          server: ${ACR_SERVER}
+          repository: supply-chain
+        gitops:
+          ssh_secret: git-ssh
+
+      contour:
+        infrastructure_provider: azure
+        envoy:
+          service:
+            type: LoadBalancer
+            externalTrafficPolicy: Local
+            annotations:
+              service.beta.kubernetes.io/azure-load-balancer-resource-group: $(params.resource_group)
+
+      tap_gui:
+        ingressEnabled: true
+        ingressDomain: ${DOMAIN_NAME}  
+        service_type: ClusterIP
+        #! TLS is configured by the overlay file
+        app_config:
+          app:
+            baseUrl: https://tap-gui.${DOMAIN_NAME}
+          backend:
+            baseUrl: https://tap-gui.${DOMAIN_NAME}
+            cors:
+              origin: https://tap-gui.${DOMAIN_NAME}
+          catalog:
+            locations:
+            - type: url
+              target: https://github.com/sample-accelerators/tanzu-java-web-app/blob/main/catalog/catalog-info.yaml
+            - type: url
+              target: https://github.com/sample-accelerators/spring-petclinic/blob/accelerator/catalog/catalog-info.yaml
+            - type: url
+              target: https://github.com/tanzu-japan/spring-music/blob/tanzu/catalog/catalog-info.yaml
+
+      accelerator:
+        domain: ${DOMAIN_NAME}  
+        ingress:
+          include: true
+          #! TLS is configured by the overlay file
+          enable_tls: false
+        server:
+          service_type: ClusterIP
+
+      metadata_store:
+        app_service_type: ClusterIP
+        ingress_enabled: "true"
+        ingress_domain: ${DOMAIN_NAME}
+
+      scanning:
+        metadataStore:
+          url: "" # Disable embedded integration since it's deprecated
+
+      package_overlays:
+      - name: cnrs
+        secrets:
+        - name: cnrs-letsencrypt
+        - name: cnrs-slim
+      - name: tap-gui
+        secrets:
+        - name: tap-gui-letsencrypt
+        - name: tap-gui-permit-mavenartifacts-read
+      - name: accelerator
+        secrets:
+        - name: accelerator-letsencrypt
+      - name: metadata-store
+        secrets:
+        - name: metadata-store-letsencrypt
+      - name: contour
+        secrets:
+        - name: contour-loadbalancer-ip
+      excluded_packages:
+      - grype.scanning.apps.tanzu.vmware.com
+      - learningcenter.tanzu.vmware.com
+      - workshops.learningcenter.tanzu.vmware.com
+      EOF
+
+      cat <<EOF > cnrs-letsencrypt.yml
+      #@ load("@ytt:data", "data")
+      #@ load("@ytt:overlay", "overlay")
+      #@ namespace = data.values.ingress.external.namespace
+      ---
+      apiVersion: cert-manager.io/v1
+      kind: ClusterIssuer
+      metadata:
+        name: letsencrypt
+      spec:
+        acme:
+          server: https://acme-v02.api.letsencrypt.org/directory
+          email: user@yourdomain.com
+          privateKeySecretRef:
+            name: letsencrypt
+          solvers:
+          - http01:
+              ingress:
+                class: contour
+      #@overlay/match by=overlay.subset({"metadata":{"name":"config-certmanager"}, "kind": "ConfigMap"})
+      ---
+      data:
+        #@overlay/match missing_ok=True
+        issuerRef: |
+          kind: ClusterIssuer
+          name: letsencrypt
+      #@overlay/match by=overlay.subset({"metadata":{"name":"config-network"}, "kind": "ConfigMap"})
+      ---
+      data:
+        #@overlay/match missing_ok=True
+        default-external-scheme: https
+        #@overlay/match missing_ok=True
+        auto-tls: Enabled
+      EOF
+
+      cat <<EOF > cnrs-slim.yml
+      #@ load("@ytt:overlay", "overlay")
+      #@overlay/match by=overlay.subset({"metadata":{"namespace":"knative-eventing"}}), expects="1+"
+      #@overlay/remove
+      ---
+      #@overlay/match by=overlay.subset({"metadata":{"namespace":"knative-sources"}}), expects="1+"
+      #@overlay/remove
+      ---
+      #@overlay/match by=overlay.subset({"metadata":{"namespace":"triggermesh"}}), expects="1+"
+      #@overlay/remove
+      ---
+      #@overlay/match by=overlay.subset({"metadata":{"namespace":"vmware-sources"}}), expects="1+"
+      #@overlay/remove
+      ---
+      EOF
+
+      cat <<EOF > tap-gui-letsencrypt.yml
+      #@ load("@ytt:data", "data")
+      #@ load("@ytt:overlay", "overlay")
+      ---
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: tap-gui
+        namespace: #@ data.values.namespace
+      spec:
+        secretName: tap-gui-cert
+        dnsNames:
+        - #@ "tap-gui.{}".format(data.values.ingressDomain)
+        issuerRef:
+          name: letsencrypt
+          kind: ClusterIssuer
+
+      #@overlay/match by=overlay.subset({"metadata":{"name":"tap-gui"}, "kind": "HTTPProxy"})
+      ---
+      spec:
+        virtualhost:
+          #@overlay/match missing_ok=True
+          tls:
+            secretName: tap-gui-cert
+      EOF
+
+      cat <<EOF > accelerator-letsencrypt.yml
+      #@ load("@ytt:data", "data")
+      #@ load("@ytt:overlay", "overlay")
+      ---
+      apiVersion: cert-manager.io/v1
+      kind: Certificate
+      metadata:
+        name: acc-server
+        namespace: accelerator-system
+      spec:
+        secretName: acc-server-cert
+        dnsNames:
+        - #@ "accelerator.{}".format(data.values.domain)
+        issuerRef:
+          name: letsencrypt
+          kind: ClusterIssuer
+
+      #@overlay/match by=overlay.subset({"metadata":{"name":"accelerator"}, "kind": "HTTPProxy"})
+      ---
+      spec:
+        virtualhost:
+          #@overlay/match missing_ok=True
+          tls:
+            secretName: acc-server-cert
+      EOF
+
+      cat <<EOF > metadata-store-letsencrypt.yml
+      #@ load("@ytt:overlay", "overlay")
+      #@overlay/match by=overlay.subset({"metadata":{"name":"ingress-cert"}, "kind": "Certificate"})
+      ---
+      spec:
+        issuerRef:
+          name: letsencrypt
+          #@overlay/match missing_ok=True
+          kind: ClusterIssuer
+      EOF
+
+      cat <<EOF > tap-gui-permit-mavenartifacts-read.yml
+      #@ load("@ytt:overlay", "overlay")
+      #@overlay/match by=overlay.subset({"kind": "ClusterRole", "metadata": {"name": "k8s-reader"}}), expects="1+"
+      ---
+      rules:
+        #@overlay/match by=overlay.subset({"apiGroups": ["source.apps.tanzu.vmware.com"]})
+        - resources:
+          - mavenartifacts
+      EOF
+
+      cat <<EOF > contour-loadbalancer-ip.yml
+      #@ load("@ytt:overlay", "overlay")
+      #@overlay/match by=overlay.subset({"kind": "Service", "metadata": {"name": "envoy"}})
+      ---
+      spec:
+        #@overlay/match missing_ok=True
+        loadBalancerIP: ${ENVOY_IP}
+      EOF
+
+      kubectl -n tap-install create secret generic cnrs-letsencrypt \
+        -o yaml \
+        --dry-run=client \
+        --from-file=cnrs-letsencrypt.yml \
+        | kubectl apply -f-
+
+      kubectl -n tap-install create secret generic cnrs-slim \
+        -o yaml \
+        --dry-run=client \
+        --from-file=cnrs-slim.yml \
+        | kubectl apply -f-
+
+      kubectl -n tap-install create secret generic tap-gui-letsencrypt \
+        -o yaml \
+        --dry-run=client \
+        --from-file=tap-gui-letsencrypt.yml \
+        | kubectl apply -f-
+
+      kubectl -n tap-install create secret generic accelerator-letsencrypt \
+        -o yaml \
+        --dry-run=client \
+        --from-file=accelerator-letsencrypt.yml \
+        | kubectl apply -f-
+
+      kubectl -n tap-install create secret generic metadata-store-letsencrypt \
+        -o yaml \
+        --dry-run=client \
+        --from-file=metadata-store-letsencrypt.yml \
+        | kubectl apply -f-
+
+      kubectl -n tap-install create secret generic tap-gui-permit-mavenartifacts-read \
+        -o yaml \
+        --dry-run=client \
+        --from-file=tap-gui-permit-mavenartifacts-read.yml \
+        | kubectl apply -f-
+
+      kubectl -n tap-install create secret generic contour-loadbalancer-ip \
+        -o yaml \
+        --dry-run=client \
+        --from-file=contour-loadbalancer-ip.yml \
+        | kubectl apply -f-
+
+      tanzu package install tap -p tap.tanzu.vmware.com -v $(params.tap_version) --values-file tap-values.yml -n tap-install --poll-timeout 60m --kubeconfig ~/.kube/config --wait=false
+
+      max_attempts=100
+      attempts=1
+      set +ex
+      while [ "$(kubectl -n tap-install get app/tap -o=jsonpath='{.status.friendlyDescription}')" != "Reconcile succeeded" ];do
+        echo -n "Attempts=${attempts} "
+        date
+        kubectl get app -n tap-install
+        echo "---------------------------------------------------------------------"
+        sleep 10
+        attempts=$(($attempts + 1))
+        if [[ "${attempts}" -gt "${max_attempts}" ]]; then
+          echo "Failed"
+          exit 1
+        fi
+      done
+      set -ex
+
+      # force recreate certificate to retry http01 challange
+      kubectl delete certificates.cert-manager.io -n tap-gui tap-gui
+      kubectl delete certificates.cert-manager.io -n metadata-store ingress-cert  
+      kubectl delete certificates.cert-manager.io -n accelerator-system acc-server
+
+      # forece trigger reconciliations
+      kubectl patch app tap-gui -n tap-install -p '{"spec":{"paused":true}}' --type=merge
+      kubectl patch app tap-gui -n tap-install -p '{"spec":{"paused":false}}' --type=merge
+      kubectl patch app accelerator -n tap-install -p '{"spec":{"paused":true}}' --type=merge
+      kubectl patch app accelerator -n tap-install -p '{"spec":{"paused":false}}' --type=merge
+      kubectl patch app metadata-store -n tap-install -p '{"spec":{"paused":true}}' --type=merge
+      kubectl patch app metadata-store -n tap-install -p '{"spec":{"paused":false}}' --type=merge
+
+      kubectl wait httpproxy -n tap-gui tap-gui --for=jsonpath='{.status.currentStatus}'=valid --timeout=15m
+      kubectl wait httpproxy -n accelerator-system accelerator --for=jsonpath='{.status.currentStatus}'=valid --timeout=15m
+      kubectl wait httpproxy -n metadata-store  metadata-store-ingress --for=jsonpath='{.status.currentStatus}'=valid --timeout=15m
+
+      kubectl get node,app,pod,httpproxy,clusterbuilder -A
+      echo "Installed TAP successfully"
+
+      echo "Set up demo environment"
+      kubectl create ns demo -o yaml \
+        --dry-run=client \
+        | kubectl apply -f-
+      set +x
+      tanzu secret registry add registry-credentials --server ${ACR_SERVER} --username ${ACR_USERNAME} --password ${ACR_PASSWORD} --namespace demo --kubeconfig ~/.kube/config
+      set -x
+      cat <<EOF | kubectl -n demo apply -f -
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: tap-registry
+        annotations:
+          secretgen.carvel.dev/image-pull-secret: ""
+      type: kubernetes.io/dockerconfigjson
+      data:
+        .dockerconfigjson: e30K
+      ---
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: git-ssh
+      ---
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: default
+      secrets:
+      - name: registry-credentials
+      - name: git-ssh
+      imagePullSecrets:
+      - name: registry-credentials
+      - name: tap-registry
+      ---
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: default-permit-deliverable
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: deliverable
+      subjects:
+      - kind: ServiceAccount
+        name: default
+      ---
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: default-permit-workload
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: workload
+      subjects:
+      - kind: ServiceAccount
+        name: default
+      EOF
+      echo "demo namespace has been set up"
+---
+# tkn task start delete-tap --showlog -w name=config,claimName=tap-automation-config --use-param-defaults -n tap-automation
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: delete-tap
+spec:
+  workspaces:
+  - name: config
+  steps:
+  - name: delete-tap
+    image: mcr.microsoft.com/azure-cli
+    script: |
+      #!/bin/bash -ex
+      rm -rf ~/.kube
+      ln -fs $(workspaces.config.path)/.kube ~/.kube
+      mkdir -p ~/.bin
+      export PATH=${PATH}:${HOME}/.bin
+      tar xf $(workspaces.config.path)/.pivnet/tanzu-framework-*-amd64.tar
+      install cli/core/*/tanzu-core-*_amd64 ${HOME}/.bin/tanzu
+      tanzu plugin install --local cli all      
+      tanzu package installed delete -n tap-install tap --kubeconfig ~/.kube/config --yes 
+---
+# tkn task start delete-envoy-ip --showlog -w name=config,claimName=tap-automation-config --use-param-defaults -n tap-automation
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: delete-envoy-ip
+spec:
+  params:
+  - name: resource_group
+    type: string
+    default: tap-rg
+  workspaces:
+  - name: config
+  steps:
+  - name: delete-envoy-ip
+    image: mcr.microsoft.com/azure-cli
+    script: |
+      #!/bin/bash -ex
+      rm -rf ~/.azure
+      mkdir -p $(workspaces.config.path)/.azure
+      ln -fs $(workspaces.config.path)/.azure ~/.azure
+      az network public-ip delete --resource-group $(params.resource_group) --name envoy-ip
+---
+# tkn task start delete-aks --showlog -w name=config,claimName=tap-automation-config --use-param-defaults -n tap-automation
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: delete-aks
+spec:
+  params:
+  - name: resource_group
+    type: string
+    default: tap-rg
+  - name: cluster_name
+    type: string
+    default: tap-sandbox
+  workspaces:
+  - name: config
+  steps:
+  - name: delete-aks
+    image: mcr.microsoft.com/azure-cli
+    script: |
+      #!/bin/bash -ex
+      rm -rf ~/.azure
+      ln -fs $(workspaces.config.path)/.azure ~/.azure
+      az aks delete --resource-group $(params.resource_group) --name $(params.cluster_name) --yes
+      rm -rf $(workspaces.config.path)/.kube
+---
+# tkn task start delete-acr --showlog -w name=config,claimName=tap-automation-config --use-param-defaults -n tap-automation
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: delete-acr
+spec:
+  params:
+  - name: resource_group
+    type: string
+    default: tap-rg
+  - name: acr_name
+    type: string
+    default: auto
+  workspaces:
+  - name: config
+  steps:
+  - name: delete-acr
+    image: mcr.microsoft.com/azure-cli
+    script: |
+      #!/bin/bash -ex
+      rm -rf ~/.azure
+      ln -fs $(workspaces.config.path)/.azure ~/.azure
+      ACR_NAME=$(params.acr_name)
+      if [ "${ACR_NAME}" == "auto" ];then
+        ACR_NAME=$(cat ~/.azure/last-acr-name)
+      fi
+      az acr delete --resource-group $(params.resource_group) --name ${ACR_NAME} --yes
+      rm -f ~/.azure/last-acr-name
+      rm -f ~/.azure/last-acr-password      
+---
+# tkn task start delete-resource-group --showlog -w name=config,claimName=tap-automation-config --use-param-defaults -n tap-automation
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: delete-resource-group
+spec:
+  params:
+  - name: resource_group
+    type: string
+    default: tap-rg
+  workspaces:
+  - name: config
+  steps:
+  - name: delete-resource-group
+    image: mcr.microsoft.com/azure-cli
+    script: |
+      #!/bin/bash -ex
+      rm -rf ~/.azure
+      ln -fs $(workspaces.config.path)/.azure ~/.azure
+      az group delete --name $(params.resource_group) --yes
+      rm -rf $(workspaces.config.path)/.azure
