@@ -183,7 +183,49 @@ standard_f4s_v2
 </tr>
 </table>
 
+<img width="1024" alt="image" src="https://user-images.githubusercontent.com/106908/182030737-aaaabf22-afcf-4eca-8dcb-144fb01aee30.png">
+
+You can see the result of the pipelinerun on the tekton dashboard
+
+```
+kubectl port-forward -n tekton-pipelines service/tekton-dashboard 9097:9097
+```
+
+## Deploy a workload
+
+```
+az aks get-credentials --resource-group tap-rg --name tap-sandbox --overwrite-existing --admin 
+```
+
+```
+tanzu apps workload apply spring-music \
+  --app spring-music \
+  --git-repo https://github.com/scottfrederick/spring-music \
+  --git-branch tanzu \
+  --type web \
+  --annotation autoscaling.knative.dev/minScale=1 \
+  -n demo \
+  -y
+tanzu apps workload tail spring-music -n demo
+```
+
+```
+tanzu apps workload get -n demo spring-music
+```
+
+<img width="1024" alt="image" src="https://user-images.githubusercontent.com/106908/182030702-94dd3176-ca45-4ebc-b4db-5260d81dcd15.png">
+
+<img width="1024" alt="image" src="https://user-images.githubusercontent.com/106908/182030768-f28f0451-ee5e-4dc8-ac92-575d8672ebc3.png">
+
+<img width="1024" alt="image" src="https://user-images.githubusercontent.com/106908/182030984-c1247d72-db64-477f-b016-dafe8d9791aa.png">
+
 ## Uninstall TAP using the tap-automation pipeline
+
+Don't forget to set the context back to the kind cluster
+
+```
+kubectl config use-context kind-tap-automation
+```
 
 ```
 tkn pipeline start tap-automation-delete --showlog -w name=config,claimName=tap-automation-config --use-param-defaults -n tap-automation

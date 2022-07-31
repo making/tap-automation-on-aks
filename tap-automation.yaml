@@ -44,12 +44,14 @@ spec:
     default: "1.2.0"
   tasks:
   - name: az-login
+    retries: 2
     taskRef:
       name: az-login
     workspaces:
     - name: config
       workspace: config
   - name: download-from-pivnet
+    retries: 2
     runAfter:
     - az-login
     taskRef:
@@ -63,6 +65,7 @@ spec:
     - name: cluster_essentials_version
       value: $(params.cluster_essentials_version)
   - name: create-resource-group
+    retries: 2
     runAfter:
     - download-from-pivnet
     taskRef:
@@ -76,6 +79,7 @@ spec:
     - name: location
       value: $(params.location)
   - name: create-acr
+    retries: 2
     runAfter:
     - create-resource-group
     taskRef:
@@ -89,6 +93,7 @@ spec:
     - name: location
       value: $(params.location)
   - name: create-aks
+    retries: 2
     runAfter:
     - create-acr
     taskRef:
@@ -108,6 +113,7 @@ spec:
     - name: node_count
       value: $(params.node_count)
   - name: install-cluster-essentials
+    retries: 2
     runAfter:
     - create-aks
     taskRef:
@@ -119,6 +125,7 @@ spec:
     - name: cluster_essentials_version
       value: $(params.cluster_essentials_version)
   - name: create-envoy-ip
+    retries: 2
     runAfter:
     - install-cluster-essentials
     taskRef:
@@ -132,6 +139,7 @@ spec:
     - name: location
       value: $(params.location)
   - name: install-tap
+    retries: 2
     runAfter:
     - create-envoy-ip
     taskRef:
@@ -173,12 +181,14 @@ spec:
     default: auto
   tasks:
   - name: az-login
+    retries: 2
     taskRef:
       name: az-login
     workspaces:
     - name: config
       workspace: config
   - name: delete-tap
+    retries: 2
     runAfter:
     - az-login
     taskRef:
@@ -187,6 +197,7 @@ spec:
     - name: config
       workspace: config
   - name: delete-envoy-ip
+    retries: 2
     runAfter:
     - delete-tap
     taskRef:
@@ -198,6 +209,7 @@ spec:
     - name: resource_group
       value: $(params.resource_group)
   - name: delete-acr
+    retries: 2
     runAfter:
     - delete-envoy-ip
     taskRef:
@@ -211,6 +223,7 @@ spec:
     - name: acr_name
       value: $(params.acr_name)
   - name: delete-aks
+    retries: 2
     runAfter:
     - delete-acr
     taskRef:
@@ -224,6 +237,7 @@ spec:
     - name: cluster_name
       value: $(params.cluster_name)
   - name: delete-resource-group
+    retries: 2
     runAfter:
     - delete-aks
     taskRef:
@@ -867,33 +881,54 @@ spec:
         --from-file=contour-loadbalancer-ip.yml \
         | kubectl apply -f-
 
-      tanzu package install tap -p tap.tanzu.vmware.com -v $(params.tap_version) --values-file tap-values.yml -n tap-install --poll-timeout 20m --kubeconfig ~/.kube/config --wait=false
+      set +e
+      tanzu package install tap -p tap.tanzu.vmware.com -v $(params.tap_version) --values-file tap-values.yml -n tap-install --kubeconfig ~/.kube/config --wait=false
+      set -e
 
-      max_attempts=100
+      max_attempts=30
       attempts=1
       set +ex
-      while [ "$(kubectl -n tap-install get app/tap -o=jsonpath='{.status.friendlyDescription}')" != "Reconcile succeeded" ];do
+      while [ "$(kubectl -n tap-install get app tap -o=jsonpath='{.status.friendlyDescription}')" != "Reconcile succeeded" ];do
         echo -n "Attempts=${attempts} "
         date
         kubectl get app -n tap-install
         echo "---------------------------------------------------------------------"
-        sleep 10
+        sleep 30
         attempts=$(($attempts + 1))
         if [[ "${attempts}" -gt "${max_attempts}" ]]; then
-          echo "Failed"
+          echo "❌ Failed"
           exit 1
         fi
       done
       set -ex
 
-      tanzu package install full-tbs-deps -p full-tbs-deps.tanzu.vmware.com -v $(params.tbs_version) -n tap-install --poll-timeout 30m --kubeconfig ~/.kube/config
+      set +e
+      tanzu package install full-tbs-deps -p full-tbs-deps.tanzu.vmware.com -v $(params.tbs_version) -n tap-install --kubeconfig ~/.kube/config --wait=false
+      set -e
 
-      # force recreate certificate to retry http01 challange
+      max_attempts=20
+      attempts=1
+      set +ex
+      while [ "$(kubectl -n tap-install get app full-tbs-deps -o=jsonpath='{.status.friendlyDescription}')" != "Reconcile succeeded" ];do
+        echo -n "Attempts=${attempts} "
+        date
+        kubectl get app -n tap-install
+        echo "---------------------------------------------------------------------"
+        sleep 30
+        attempts=$(($attempts + 1))
+        if [[ "${attempts}" -gt "${max_attempts}" ]]; then
+          echo "❌ Failed"
+          exit 1
+        fi
+      done
+      set -e
+
+      echo "Force recreate certificate to retry http01 challenge"
       kubectl delete certificates.cert-manager.io -n tap-gui tap-gui
       kubectl delete certificates.cert-manager.io -n metadata-store ingress-cert  
       kubectl delete certificates.cert-manager.io -n accelerator-system acc-server
 
-      # forece trigger reconciliations
+      echo "Force trigger reconciliations"
       kubectl patch app tap-gui -n tap-install -p '{"spec":{"paused":true}}' --type=merge
       kubectl patch app tap-gui -n tap-install -p '{"spec":{"paused":false}}' --type=merge
       kubectl patch app accelerator -n tap-install -p '{"spec":{"paused":true}}' --type=merge
@@ -906,9 +941,9 @@ spec:
       kubectl wait httpproxy -n metadata-store  metadata-store-ingress --for=jsonpath='{.status.currentStatus}'=valid --timeout=15m
 
       kubectl get node,app,pod,httpproxy,clusterbuilder -A
-      echo "Installed TAP successfully"
+      echo "✅ Installed TAP successfully"
 
-      echo "Set up demo environment"
+      echo "Set up demo namespace"
       kubectl create ns demo -o yaml \
         --dry-run=client \
         | kubectl apply -f-
@@ -966,7 +1001,7 @@ spec:
       - kind: ServiceAccount
         name: default
       EOF
-      echo "demo namespace has been set up"
+      echo "✅ demo namespace has been set up"
 ---
 # tkn task start delete-tap --showlog -w name=config,claimName=tap-automation-config --use-param-defaults -n tap-automation
 apiVersion: tekton.dev/v1beta1
