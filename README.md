@@ -1,5 +1,7 @@
 # TAP Automation on AKS
 
+A tekton pipeline that provision an AKS cluster and install TAP full profile with HTTPS (Let's Encrypt) enabled on the cluster.
+
 ## Prerequisites
 
 * [`kubectl`](https://kubernetes.io/docs/tasks/tools/) CLI
@@ -183,9 +185,15 @@ standard_f4s_v2
 </tr>
 </table>
 
+[Log Example](https://gist.github.com/making/354fad9227a3298654e84e68d4ceba45)
+
+After the installation, you can access the TAP GUI, The url should be `https://tap-gui.***-***-***-***.sslip.io` <<-- check the url in the log.
+
 <img width="1024" alt="image" src="https://user-images.githubusercontent.com/106908/182030737-aaaabf22-afcf-4eca-8dcb-144fb01aee30.png">
 
 You can see the result of the pipelinerun on the tekton dashboard
+
+<img width="1024" alt="image" src="https://user-images.githubusercontent.com/106908/182033773-6d5460e3-29af-442d-91fe-15cffa13998e.png">
 
 ```
 kubectl port-forward -n tekton-pipelines service/tekton-dashboard 9097:9097
