@@ -36,6 +36,9 @@ spec:
   - name: tap_version
     type: string
     default: "1.2.0"
+  - name: tbs_version
+    type: string
+    default: "1.6.0"
   - name: cluster_essentials_version
     type: string
     default: "1.2.0"
@@ -141,6 +144,8 @@ spec:
       value: $(params.resource_group)
     - name: tap_version
       value: $(params.tap_version)
+    - name: tbs_version
+      value: $(params.tbs_version)
     - name: acr_name
       value: $(tasks.create-acr.results.acr_name)
     - name: acr_password
@@ -505,6 +510,9 @@ spec:
   - name: tap_version
     type: string
     default: "1.2.0"
+  - name: tbs_version
+    type: string
+    default: "1.6.0"
   - name: acr_name
     type: string
     default: auto
@@ -583,6 +591,10 @@ spec:
         --url registry.tanzu.vmware.com/tanzu-application-platform/tap-packages:$(params.tap_version) \
         --namespace tap-install \
         --kubeconfig ~/.kube/config
+      tanzu package repository add tbs-full-deps-repository \
+        --url registry.tanzu.vmware.com/tanzu-application-platform/full-tbs-deps-package-repo:$(params.tbs_version) \
+        --namespace tap-install \
+        --kubeconfig ~/.kube/config
 
       cat <<EOF > tap-values.yml
       profile: full
@@ -597,6 +609,7 @@ spec:
         kp_default_repository: ${ACR_SERVER}/build-service
         kp_default_repository_username: ${ACR_USERNAME}
         kp_default_repository_password: ${ACR_PASSWORD}
+        exclude_dependencies: true
 
       supply_chain: basic
 
@@ -854,7 +867,7 @@ spec:
         --from-file=contour-loadbalancer-ip.yml \
         | kubectl apply -f-
 
-      tanzu package install tap -p tap.tanzu.vmware.com -v $(params.tap_version) --values-file tap-values.yml -n tap-install --poll-timeout 60m --kubeconfig ~/.kube/config --wait=false
+      tanzu package install tap -p tap.tanzu.vmware.com -v $(params.tap_version) --values-file tap-values.yml -n tap-install --poll-timeout 20m --kubeconfig ~/.kube/config --wait=false
 
       max_attempts=100
       attempts=1
@@ -872,6 +885,8 @@ spec:
         fi
       done
       set -ex
+
+      tanzu package install full-tbs-deps -p full-tbs-deps.tanzu.vmware.com -v $(params.tbs_version) -n tap-install --poll-timeout 30m --kubeconfig ~/.kube/config
 
       # force recreate certificate to retry http01 challange
       kubectl delete certificates.cert-manager.io -n tap-gui tap-gui

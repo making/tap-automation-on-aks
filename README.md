@@ -154,7 +154,7 @@ standard_f4s_v2
 <code>node_count</code>
 </td>
 <td>
-3 (may be reduced automatically by cluster-autoscaler)
+3 (subject to change by cluster-autoscaler)
 </td>
 </tr>
 <tr>
@@ -163,6 +163,14 @@ standard_f4s_v2
 </td>
 <td>
 1.2.0
+</td>
+</tr>
+<tr>
+<td>
+<code>tbs_version</code>
+</td>
+<td>
+1.6.0
 </td>
 </tr>
 <tr>
