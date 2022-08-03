@@ -606,7 +606,7 @@ spec:
         --namespace tap-install \
         --kubeconfig ~/.kube/config
       tanzu package repository add tbs-full-deps-repository \
-        --url registry.tanzu.vmware.com/tanzu-application-platform/full-tbs-deps-package-repo:$(params.tbs_version) \
+        --url registry.tanzu.vmware.com/build-service/full-tbs-deps-package-repo:$(params.tbs_version) \
         --namespace tap-install \
         --kubeconfig ~/.kube/config
 
