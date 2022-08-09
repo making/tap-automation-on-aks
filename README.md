@@ -227,6 +227,13 @@ tanzu apps workload get -n demo spring-music
 
 <img width="1024" alt="image" src="https://user-images.githubusercontent.com/106908/182030984-c1247d72-db64-477f-b016-dafe8d9791aa.png">
 
+
+How to retrieve `tap-values.yml`
+
+```
+kubectl get secret -n tap-install tap-tap-install-values -otemplate='{{(index .data "tap-values.yml") | base64decode}}'
+```
+
 ## Uninstall TAP using the tap-automation pipeline
 
 Don't forget to set the context back to the kind cluster
