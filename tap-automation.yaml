@@ -523,10 +523,10 @@ spec:
     default: tap-rg
   - name: tap_version
     type: string
-    default: "1.2.0"
+    default: "1.2.1"
   - name: tbs_version
     type: string
-    default: "1.6.0"
+    default: "1.6.1"
   - name: acr_name
     type: string
     default: auto
@@ -690,7 +690,6 @@ spec:
       - name: tap-gui
         secrets:
         - name: tap-gui-letsencrypt
-        - name: tap-gui-permit-mavenartifacts-read
       - name: accelerator
         secrets:
         - name: accelerator-letsencrypt
@@ -820,16 +819,6 @@ spec:
           kind: ClusterIssuer
       EOF
 
-      cat <<EOF > tap-gui-permit-mavenartifacts-read.yml
-      #@ load("@ytt:overlay", "overlay")
-      #@overlay/match by=overlay.subset({"kind": "ClusterRole", "metadata": {"name": "k8s-reader"}}), expects="1+"
-      ---
-      rules:
-        #@overlay/match by=overlay.subset({"apiGroups": ["source.apps.tanzu.vmware.com"]})
-        - resources:
-          - mavenartifacts
-      EOF
-
       cat <<EOF > contour-loadbalancer-ip.yml
       #@ load("@ytt:overlay", "overlay")
       #@overlay/match by=overlay.subset({"kind": "Service", "metadata": {"name": "envoy"}})
@@ -867,12 +856,6 @@ spec:
         -o yaml \
         --dry-run=client \
         --from-file=metadata-store-letsencrypt.yml \
-        | kubectl apply -f-
-
-      kubectl -n tap-install create secret generic tap-gui-permit-mavenartifacts-read \
-        -o yaml \
-        --dry-run=client \
-        --from-file=tap-gui-permit-mavenartifacts-read.yml \
         | kubectl apply -f-
 
       kubectl -n tap-install create secret generic contour-loadbalancer-ip \
