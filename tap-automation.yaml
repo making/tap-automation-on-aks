@@ -677,6 +677,7 @@ spec:
         app_service_type: ClusterIP
         ingress_enabled: "true"
         ingress_domain: ${DOMAIN_NAME}
+        ns_for_export_app_cert: "*"
 
       scanning:
         metadataStore:
